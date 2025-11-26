@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>星穹铁道战斗模拟器 (修复版)</title>
+    <style>
+        /* === 样式表 === */
+        :root {
+            --bg-color: #0d1117;
+            --ui-panel: rgba(22, 27, 34, 0.95);
+            --sp-color: #ffd700;
+            --hp-color: #2ecc71;
+            --enemy-hp: #e74c3c;
+            --toughness-color: #ecf0f1;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            background-color: var(--bg-color);
+            color: white;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* 左侧行动条 */
+        #action-bar-container {
+            width: 110px;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            border-right: 1px solid #333;
+            z-index: 10;
+        }
+
+        .action-card {
+            background: #2c3e50;
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 12px;
+            border: 2px solid transparent;
+            transition: transform 0.3s;
+        }
+        
+        .action-card.active {
+            border-color: var(--sp-color);
+            background: #34495e;
+            transform: scale(1.05);
+        }
+
+        /* 战斗主区域 */
+        #battle-field {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            background: linear-gradient(to bottom, #1a1a2e, #16213e);
+        }
+
+        .enemy-group { display: flex; gap: 30px; margin-bottom: 120px; }
+        .player-group { position: absolute; bottom: 160px; display: flex; gap: 40px; }
+
+        .unit {
+            width: 100px;
+            text-align: center;
+            position: relative;
+            transition: transform 0.2s;
+        }
+
+        .unit.active { transform: scale(1.1); z-index: 5; }
+        
+        /* 选中光圈 */
+        .unit.active .unit-avatar {
+            box-shadow: 0 0 15px var(--sp-color);
+            border-color: var(--sp-color);
+        }
+
+        .unit-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #444;
+            margin: 0 auto 10px;
+            border: 3px solid #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+        }
+
+        /* 血条与韧性 */
+        .bar-container { width: 100%; height: 6px; background: #333; margin-top: 4px; border-radius: 3px; overflow: hidden; }
+        .hp-bar { height: 100%; background: var(--hp-color); transition: width 0.3s; }
+        .enemy-hp-bar { background: var(--enemy-hp); }
+        .toughness-bar { height: 100%; background: var(--toughness-color); transition: width 0.3s; }
+
+        /* 底部操作面板 */
+        #control-panel {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 130px;
+            background: var(--ui-panel);
+            display: flex;
+            justify-content: space-between; /* 两端对齐 */
+            align-items: center;
+            padding: 0 50px;
+            box-sizing: border-box;
+            border-top: 1px solid #444;
+            z-index: 20; /* 确保在最上层 */
+        }
+
+        /* 战技点 */
+        .sp-display { display: flex; gap: 6px; align-items: center; }
+        .sp-dot { width: 14px; height: 14px; background: #333; border: 1px solid #666; transform: rotate(45deg); margin: 0 2px; }
+        .sp-dot.active { background: var(--sp-color); box-shadow: 0 0 8px var(--sp-color); border-color: #fff; }
+
+        /* 技能按钮 */
+        .skills-wrapper { display: flex; gap: 25px; margin-right: 50px;}
+        
+        .skill-btn {
+            width: 85px;
+            height: 85px;
+            border-radius: 50%;
+            border: 2px solid #666;
+            background: #222;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .skill-btn:hover:not(:disabled) { transform: scale(1.1); border-color: white; background: #333; }
+        .skill-btn:active:not(:disabled) { transform: scale(0.95); }
+        .skill-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(100%); }
+
+        /* 伤害数字动画 */
+        .damage-text {
+            position: absolute; color: white; font-size: 28px; font-weight: bold;
+            text-shadow: 0 0 5px red; pointer-events: none; animation: floatUp 0.8s forwards; z-index: 100;
+        }
+        @keyframes floatUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-60px); opacity: 0; } }
+
+        /* 日志窗口 */
+        #log-window {
+            position: absolute; top: 10px; right: 10px; width: 300px; height: 120px;
+            background: rgba(0,0,0,0.6); color: #ddd; font-size: 12px; padding: 10px;
+            overflow-y: auto; pointer-events: none; border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="action-bar-container">
+        <div style="text-align: center; color:#aaa; font-size:12px; margin-bottom:10px;">行动序列</div>
+        <div id="action-list"></div>
+    </div>
+
+    <div id="battle-field">
+        <div id="log-window"></div>
+        
+        <div class="enemy-group" id="enemy-container"></div>
+        
+        <div class="player-group" id="player-container"></div>
+    </div>
+
+    <div id="control-panel">
+        <div class="panel-left">
+            <div style="font-size: 14px; color: #aaa; margin-bottom: 8px;">战技点 (SP)</div>
+            <div class="sp-display" id="sp-container">
+                </div>
+        </div>
+
+        <div id="turn-msg" style="font-size: 20px; font-weight: bold; color: #fff;"></div>
+
+        <div class="skills-wrapper">
+            <button class="skill-btn" id="btn-basic" onclick="game.playerAction('basic')">
+                <span style="font-size:12px; color:#aaa;">普通攻击</span>
+                <span style="font-size:18px; font-weight:bold;">Q</span>
+                <span style="font-size:10px; color:#2ecc71; margin-top:2px;">SP +1</span>
+            </button>
+            
+            <button class="skill-btn" id="btn-skill" onclick="game.playerAction('skill')">
+                <span style="font-size:12px; color:#aaa;">战技</span>
+                <span style="font-size:18px; font-weight:bold;">E</span>
+                <span style="font-size:10px; color:#e74c3c; margin-top:2px;">SP -1</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // === 1. 核心数据类 ===
+        class Unit {
+            constructor(id, name, hp, toughness, speed, type, avatar) {
+                this.id = id;
+                this.name = name;
+                this.maxHp = hp;
+                this.currentHp = hp;
+                this.maxToughness = toughness;
+                this.currentToughness = toughness;
+                this.speed = speed;
+                this.type = type; 
+                this.avatar = avatar;
+                this.actionValue = 10000 / speed; 
+                this.isBroken = false;
+            }
+        }
+
+        // === 2. 游戏控制器 ===
+        const game = {
+            skillPoints: 3,
+            maxSkillPoints: 5,
+            units: [],
+            isPlayerTurn: false,
+            activeUnit: null,
+
+            // 初始化
+            init: function() {
+                // 创建角色：速度越快 AV 越小，越先出手
+                this.units = [
+                    new Unit(1, "开拓者", 1200, 0, 100, 'player', '🏏'),
+                    new Unit(2, "三月七", 1000, 0, 125, 'player', '🏹'), // 速度快
+                    new Unit(3, "虚卒", 3000, 90, 95, 'enemy', '👾')
+                ];
+
+                this.renderStaticUI();
+                this.log("系统加载完成...战斗开始！");
+                this.nextTurn();
+            },
+
+            // 回合计算核心逻辑
+            nextTurn: function() {
+                // 1. 排序：找AV最小的单位
+                this.units.sort((a, b) => a.actionValue - b.actionValue);
+                const current = this.units[0];
+                const elapsed = current.actionValue;
+
+                // 2. 跑条：所有单位减去经过的时间
+                this.units.forEach(u => {
+                    u.actionValue = Math.max(0, u.actionValue - elapsed);
+                    // 简单的击破恢复逻辑
+                    if(u === current && u.isBroken) {
+                        u.isBroken = false;
+                        u.currentToughness = u.maxToughness;
+                        this.log(`${u.name} 恢复了韧性！`);
+                    }
+                });
+
+                // 3. 重置当前单位的AV (跑完一圈回起点)
+                current.actionValue = 10000 / current.speed;
+                this.activeUnit = current;
+
+                // 4. 更新UI
+                this.updateUI();
+
+                // 5. 判断行动方
+                const msg = document.getElementById('turn-msg');
+                
+                if (current.type === 'player') {
+                    this.isPlayerTurn = true;
+                    msg.innerText = `👉 ${current.name} 的回合`;
+                    msg.style.color = "#3498db";
+                    this.toggleButtons(true);
+                } else {
+                    this.isPlayerTurn = false;
+                    msg.innerText = `⚠️ ${current.name} 行动中...`;
+                    msg.style.color = "#e74c3c";
+                    this.toggleButtons(false);
+                    // 延迟模拟敌人AI
+                    setTimeout(() => this.enemyAction(), 1000);
+                }
+            },
+
+            // 玩家点击事件
+            playerAction: function(actionType) {
+                if (!this.isPlayerTurn) {
+                    console.log("现在不是你的回合，无法点击");
+                    return;
+                }
+
+                // 自动锁定一个活着的敌人
+                const target = this.units.find(u => u.type === 'enemy' && u.currentHp > 0);
+                if (!target) { alert("敌人已消灭！"); return; }
+
+                const actor = this.activeUnit;
+
+                if (actionType === 'basic') {
+                    // 普攻：回火，低伤害，低削韧
+                    this.dealDamage(target, 200, 30);
+                    this.changeSP(1);
+                    this.log(`${actor.name} 使用普攻`);
+                } 
+                else if (actionType === 'skill') {
+                    // 战技：耗火，高伤害，高削韧
+                    if (this.skillPoints <= 0) {
+                        alert("战技点不足！请使用普攻回点。");
+                        return;
+                    }
+                    this.changeSP(-1);
+                    this.dealDamage(target, 450, 60);
+                    this.log(`${actor.name} 使用战技`);
+                }
+
+                // 行动结束
+                this.isPlayerTurn = false; 
+                this.toggleButtons(false);
+                setTimeout(() => this.checkWinCondition(), 500);
+            },
+
+            // 敌人AI
+            enemyAction: function() {
+                const enemy = this.activeUnit;
+                if(enemy.currentHp <= 0) { this.nextTurn(); return; }
+
+                // 随机攻击一个玩家
+                const targets = this.units.filter(u => u.type === 'player' && u.currentHp > 0);
+                if (targets.length > 0) {
+                    const victim = targets[Math.floor(Math.random() * targets.length)];
+                    this.log(`${enemy.name} 攻击了 ${victim.name}`);
+                    this.dealDamage(victim, 150, 0); // 敌人暂时不削韧玩家
+                }
+                this.checkWinCondition();
+            },
+
+            // 造成伤害与削韧
+            dealDamage: function(target, dmg, breakVal) {
+                // 击破倍率
+                let finalDmg = target.isBroken ? dmg * 1.5 : dmg;
+                
+                // 削韧逻辑
+                if (target.type === 'enemy' && !target.isBroken && breakVal > 0) {
+                    target.currentToughness -= breakVal;
+                    if (target.currentToughness <= 0) {
+                        target.currentToughness = 0;
+                        target.isBroken = true;
+                        finalDmg += 500; // 击破额外伤害
+                        this.showFloatingText(target.id, "击破!", "#ffd700");
+                        this.log(`💥 ${target.name} 弱点被击破！`);
+                    }
+                }
+
+                target.currentHp = Math.max(0, target.currentHp - finalDmg);
+                this.showFloatingText(target.id, Math.floor(finalDmg), "#fff");
+                this.updateUI();
+            },
+
+            // 检查胜负
+            checkWinCondition: function() {
+                const enemyAlive = this.units.some(u => u.type === 'enemy' && u.currentHp > 0);
+                const playerAlive = this.units.some(u => u.type === 'player' && u.currentHp > 0);
+
+                if (!enemyAlive) {
+                    alert("🏆 战斗胜利！");
+                    location.reload();
+                } else if (!playerAlive) {
+                    alert("☠️ 全员阵亡，请按F5重试...");
+                } else {
+                    // 游戏继续，下一回合
+                    this.nextTurn();
+                }
+            },
+
+            // === 辅助功能 ===
+            changeSP: function(val) {
+                this.skillPoints += val;
+                if(this.skillPoints > this.maxSkillPoints) this.skillPoints = this.maxSkillPoints;
+                if(this.skillPoints < 0) this.skillPoints = 0;
+                this.updateUI(); // 刷新UI显示
+            },
+
+            log: function(text) {
+                const win = document.getElementById('log-window');
+                win.innerHTML += `<div>> ${text}</div>`;
+                win.scrollTop = win.scrollHeight;
+            },
+
+            // === UI 渲染 ===
+            renderStaticUI: function() {
+                // 渲染战技点点数 DOM
+                const spCont = document.getElementById('sp-container');
+                spCont.innerHTML = '';
+                for(let i=0; i<this.maxSkillPoints; i++) {
+                    let dot = document.createElement('div');
+                    dot.className = 'sp-dot';
+                    spCont.appendChild(dot);
+                }
+                
+                // 渲染初始单位模型
+                const pDiv = document.getElementById('player-container');
+                const eDiv = document.getElementById('enemy-container');
+                
+                this.units.forEach(u => {
+                    const html = `
+                        <div id="unit-${u.id}" class="unit">
+                            ${u.type === 'enemy' ? '<div class="bar-container" style="background:#555"><div class="toughness-bar" style="width:100%"></div></div>' : ''}
+                            <div class="unit-avatar">${u.avatar}</div>
+                            <div class="bar-container"><div class="hp-bar ${u.type === 'enemy' ? 'enemy-hp-bar':''}" style="width:100%"></div></div>
+                            <div style="font-size:12px; margin-top:2px;">${u.name}</div>
+                        </div>
+                    `;
+                    if(u.type === 'player') pDiv.innerHTML += html;
+                    else eDiv.innerHTML += html;
+                });
+            },
+
+            updateUI: function() {
+                // 1. 更新血条/韧性条
+                this.units.forEach(u => {
+                    const el = document.getElementById(`unit-${u.id}`);
+                    if(!el) return;
+                    
+                    const hpPct = (u.currentHp / u.maxHp) * 100;
+                    el.querySelector('.hp-bar').style.width = hpPct + '%';
+                    
+                    if(u.type === 'enemy') {
+                        const tPct = (u.currentToughness / u.maxToughness) * 100;
+                        el.querySelector('.toughness-bar').style.width = tPct + '%';
+                    }
+
+                    // 激活高亮
+                    if(this.activeUnit && u.id === this.activeUnit.id) el.classList.add('active');
+                    else el.classList.remove('active');
+                });
+
+                // 2. 更新战技点
+                const dots = document.querySelectorAll('.sp-dot');
+                dots.forEach((dot, idx) => {
+                    if(idx < this.skillPoints) dot.classList.add('active');
+                    else dot.classList.remove('active');
+                });
+
+                // 3. 更新左侧行动条
+                const actionList = document.getElementById('action-list');
+                actionList.innerHTML = '';
+                // 复制并预测下一次行动
+                let predictList = [...this.units].sort((a,b) => a.actionValue - b.actionValue);
+                predictList.forEach(u => {
+                    let div = document.createElement('div');
+                    div.className = `action-card ${this.activeUnit && u.id === this.activeUnit.id ? 'active' : ''}`;
+                    div.innerHTML = `<div>${u.avatar} ${u.name}</div><div style="font-size:10px; color:#aaa">${Math.floor(u.actionValue)} AV</div>`;
+                    actionList.appendChild(div);
+                });
+
+                // 4. 按钮状态控制
+                const btnSkill = document.getElementById('btn-skill');
+                const btnBasic = document.getElementById('btn-basic');
+                
+                // 如果不是玩家回合，CSS样式上变灰，但实际由 toggleButtons 控制点击
+                if(this.skillPoints <= 0) btnSkill.disabled = true;
+                else if(this.isPlayerTurn) btnSkill.disabled = false;
+            },
+
+            toggleButtons: function(enable) {
+                const btnSkill = document.getElementById('btn-skill');
+                const btnBasic = document.getElementById('btn-basic');
+                btnBasic.disabled = !enable;
+                // 战技还要额外判断点数
+                if (!enable || this.skillPoints <= 0) {
+                    btnSkill.disabled = true;
+                } else {
+                    btnSkill.disabled = false;
+                }
+            },
+
+            showFloatingText: function(unitId, text, color) {
+                const unitEl = document.getElementById(`unit-${unitId}`);
+                if(!unitEl) return;
+                let div = document.createElement('div');
+                div.className = 'damage-text';
+                div.innerText = text;
+                div.style.color = color || 'white';
+                div.style.left = '50%';
+                div.style.top = '0';
+                unitEl.appendChild(div);
+                setTimeout(() => div.remove(), 800);
+            }
+        };
+
+        // === 3. 启动游戏 (确保DOM加载后执行) ===
+        window.onload = function() {
+            try {
+                game.init();
+                // 键盘快捷键绑定
+                document.addEventListener('keydown', (e) => {
+                    if (game.isPlayerTurn) {
+                        if (e.key.toLowerCase() === 'q') game.playerAction('basic');
+                        if (e.key.toLowerCase() === 'e') game.playerAction('skill');
+                    }
+                });
+            } catch (e) {
+                alert("游戏启动失败，请检查浏览器控制台(F12)");
+                console.error(e);
+            }
+        };
+    </script>
+</body>
+</html>
